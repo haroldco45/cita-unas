@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es-CO">
+<html lang="es-CO" data-app="cliente">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -205,6 +205,13 @@ footer .link{font-size:.8rem;color:var(--muted)}
   .svc-head{display:none!important}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+/* Entrada de administración (admin.html) */
+.login{max-width:380px;margin:30px auto 0;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:26px 22px;display:grid;gap:12px}
+.login h2{font-size:1.5rem}
+.login p{margin:0}
+.login .btn{width:100%}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.adm-flag{display:inline-block;margin-top:14px;font-weight:700;font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:var(--lacquer);border:1.5px solid var(--lacquer);border-radius:999px;padding:4px 12px}
 </style>
 </head>
 <body>
@@ -218,11 +225,24 @@ footer .link{font-size:.8rem;color:var(--muted)}
   <nav class="tabs" role="tablist" id="mainTabs">
     <button class="tab" role="tab" aria-selected="true" data-view="reservar">Separar cita</button>
     <button class="tab" role="tab" aria-selected="false" data-view="mis">Mis citas</button>
-    <button class="tab hidden" role="tab" aria-selected="false" data-view="admin" id="tabAdmin">Administración</button>
   </nav>
+  <div class="adm-flag hidden" id="admFlag">Administración</div>
 </header>
 
 <main class="wrap">
+  <!-- ADMINISTRACIÓN: ENTRADA CON PIN (solo en admin.html) -->
+  <div id="view-login" class="hidden">
+    <section class="login">
+      <h2>Entrar a la administración</h2>
+      <p class="muted">Escribe tu PIN para ver la agenda, el histórico y la configuración.</p>
+      <label for="pinIn" class="sr">PIN</label>
+      <input id="pinIn" class="inp" type="password" inputmode="numeric" maxlength="8" autocomplete="current-password" placeholder="PIN">
+      <div class="err hidden" id="pinErr">PIN incorrecto.</div>
+      <button class="btn" id="pinOk">Entrar</button>
+      <p class="hint">¿Se te olvidó el PIN? Escríbele a Vibras Positivas HM al 311 770 0431.</p>
+    </section>
+  </div>
+
   <!-- CLIENTE: RESERVAR -->
   <div id="view-reservar">
     <div id="adminBanner" class="note hidden">Estás agendando una cita a nombre de una clienta. <button class="link" id="cancelAdminBook">Volver a la agenda</button></div>
@@ -307,17 +327,8 @@ footer .link{font-size:.8rem;color:var(--muted)}
 </div>
 
 <footer class="wrap">
-  <div><button class="link" id="openAdmin">Acceso administración</button></div>
   <p>Desarrollada por Vibras Positivas HM — Derechos de Autor Reservados</p>
 </footer>
-
-<dialog id="pinDlg">
-  <h3 style="font-size:1.3rem;margin-bottom:6px">Administración</h3>
-  <p class="muted" style="margin:0 0 12px;font-size:.9rem">Escribe tu PIN.</p>
-  <input id="pinIn" class="inp" type="password" inputmode="numeric" maxlength="8" autocomplete="off">
-  <div class="err hidden" id="pinErr">PIN incorrecto.</div>
-  <div class="row" style="justify-content:flex-end"><button class="btn ghost sm" id="pinCancel">Cancelar</button><button class="btn sm" id="pinOk">Entrar</button></div>
-</dialog>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
@@ -353,6 +364,8 @@ const $ = id => document.getElementById(id);
    API_URL: dirección de la API en Hostinger.
    Modo demostración (datos en el navegador): vista previa en Claude, archivo local o ?demo en la dirección. */
 const API_URL = 'https://citas.vibraspositivashm.com/api/index.php';
+// admin.html marca <html data-app="admin">: esa es la única entrada a la administración
+const ES_ADMIN = document.documentElement.dataset.app === 'admin';
 const MODO_DEMO = !API_URL || location.protocol==='file:' || /claude\.ai|claudeusercontent|claude\.site/.test(location.host) || new URLSearchParams(location.search).has('demo');
 
 /* ============ Datos por defecto ============ */
@@ -530,7 +543,7 @@ function proximosLibres(desde,dur,cuantos=3){
 function pintarMarca(){
   $('bizName').textContent=CFG.negocio||'Tu estudio de uñas';
   $('bizSlogan').textContent=CFG.slogan||'';
-  document.title=`Separa tu cita · ${CFG.negocio}`;
+  document.title= ES_ADMIN ? `Administración · ${CFG.negocio}` : `Separa tu cita · ${CFG.negocio}`;
 }
 function pintarServicios(){
   const cats={}; CFG.servicios.filter(s=>s.activo).forEach(s=>(cats[s.cat]??=[]).push(s));
@@ -895,18 +908,27 @@ function errorAdmin(e){
   toast((e&&e.mensaje)||'Algo falló. Intenta de nuevo.');
 }
 async function salirAdmin(expirada){
-  adminOn=false; verTel.clear(); $('tabAdmin').classList.add('hidden');
+  adminOn=false; verTel.clear();
   if(expirada) Store.olvidarToken(); else { try{ await Store.logout(); }catch(_){} }
   try{ await recargarDatos(); }catch(_){}
   sel.porAdmin=false; $('adminBanner').classList.add('hidden');
-  pintarMarca(); pintarServicios(); mostrarVista('reservar');
+  pintarMarca(); pintarServicios(); mostrarLogin();
   toast(expirada? 'La sesión de administración se cerró. Vuelve a entrar con tu PIN.' : 'Sesión de administración cerrada.');
+}
+function mostrarLogin(){
+  ['reservar','mis','admin'].forEach(x=>$('view-'+x).classList.add('hidden'));
+  $('view-login').classList.remove('hidden');
+  $('bar').classList.add('hidden');
+  $('pinIn').value=''; $('pinErr').classList.add('hidden');
+  setTimeout(()=>$('pinIn').focus(),50);
 }
 // La agenda se actualiza sola cada minuto mientras está abierta
 setInterval(()=>{ if(adminOn && document.visibilityState==='visible' && admTab!=='config' && !$('view-admin').classList.contains('hidden')) refrescarAdmin(false); },60000);
 
 /* ============ Navegación ============ */
 function mostrarVista(v){
+  if(v==='admin' && !adminOn){ if(ES_ADMIN) mostrarLogin(); return; }
+  $('view-login').classList.add('hidden');
   ['reservar','mis','admin'].forEach(x=>$('view-'+x).classList.toggle('hidden',x!==v));
   $('mainTabs').querySelectorAll('.tab').forEach(b=>b.setAttribute('aria-selected',b.dataset.view===v));
   if(v==='admin') cambiarAdm(admTab);
@@ -922,14 +944,13 @@ $('cancelAdminBook').onclick=()=>{ sel.porAdmin=false; $('adminBanner').classLis
 $('misBuscar').onclick=pintarMis;
 $('misTel').addEventListener('keydown',e=>{ if(e.key==='Enter') pintarMis(); });
 $('fTel').addEventListener('input',e=>e.target.value=e.target.value.replace(/\D/g,''));
-$('openAdmin').onclick=()=>{ if(adminOn){ mostrarVista('admin'); return; } $('pinIn').value=''; $('pinErr').classList.add('hidden'); $('pinDlg').showModal(); $('pinIn').focus(); };
-$('pinCancel').onclick=()=>$('pinDlg').close();
 const entrar=async()=>{
+  if(!ES_ADMIN) return;
   const pin=$('pinIn').value.trim(); if(!pin) return;
   $('pinOk').disabled=true; $('pinErr').classList.add('hidden');
   try{
     await Store.login(pin); adminOn=true; await recargarDatos();
-    $('pinDlg').close(); $('tabAdmin').classList.remove('hidden'); pintarServicios(); mostrarVista('admin');
+    pintarMarca(); pintarServicios(); mostrarVista('admin');
   }catch(e){ adminOn=false; $('pinErr').textContent=e.mensaje||'PIN incorrecto.'; $('pinErr').classList.remove('hidden'); }
   $('pinOk').disabled=false;
 };
@@ -947,14 +968,19 @@ async function recargarDatos(){
 }
 (async()=>{
   CFG=structuredClone(CONFIG_BASE);
-  adminOn=Store.tieneSesion();
+  // La administración solo existe en admin.html; la página de clientas nunca la abre
+  adminOn=ES_ADMIN && Store.tieneSesion();
+  if(ES_ADMIN){
+    $('mainTabs').classList.add('hidden'); $('admFlag').classList.remove('hidden');
+    document.title='Administración · '+(CFG.negocio||'Estudio de uñas');
+  }
   try{ await recargarDatos(); }
   catch(e){
     if(e&&e.error==='sin_sesion'){ Store.olvidarToken(); adminOn=false; try{ await recargarDatos(); }catch(_){ toast('No hay conexión con el servidor.'); } }
     else { CITAS=[]; toast((e&&e.mensaje)||'No hay conexión con el servidor.'); }
   }
-  if(adminOn) $('tabAdmin').classList.remove('hidden');
   pintarMarca(); pintarServicios(); irPaso(1);
+  if(ES_ADMIN){ adminOn? mostrarVista('admin') : mostrarLogin(); document.title='Administración · '+(CFG.negocio||'Estudio de uñas'); }
   if(MODO_DEMO && !API_URL) console.info('Modo demostración: los datos se guardan en este navegador.');
 })();
 </script>

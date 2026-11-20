@@ -1,6 +1,6 @@
 # Citas · Estudio de uñas
 
-App para que las clientas de un estudio de uñas (manos y pies) separen su cita en línea. La app muestra solo las horas en que cabe el servicio completo. Si el día está lleno, sugiere los días más cercanos con cupo. La dueña administra la agenda, el histórico, las clientas y la configuración desde la misma app, con PIN.
+App para que las clientas de un estudio de uñas (manos y pies) separen su cita en línea. La app muestra solo las horas en que cabe el servicio completo. Si el día está lleno, sugiere los días más cercanos con cupo. La dueña administra la agenda, el histórico, las clientas y la configuración desde una dirección aparte, con PIN.
 
 Desarrollada por **Vibras Positivas HM** — Derechos de Autor Reservados.
 
@@ -8,7 +8,8 @@ Desarrollada por **Vibras Positivas HM** — Derechos de Autor Reservados.
 
 | Parte | Dónde vive | Qué hace |
 |---|---|---|
-| `index.html` | GitHub Pages (haroldco45/citas-unas) y Netlify | La app que ven la clienta y la dueña |
+| `index.html` | GitHub Pages (haroldco45/cita-unas) y Netlify | La app de las clientas: separar y cancelar citas. No tiene ninguna entrada a la administración |
+| `admin.html` | GitHub Pages y Netlify | La administración de la dueña: abre directo en la pantalla del PIN |
 | `api/index.php` | Hostinger, `citas.vibraspositivashm.com/api/` | Recibe y valida las reservas, guarda en MySQL |
 | `api/schema.sql` | Se ejecuta una vez en phpMyAdmin | Crea las tablas y carga los servicios iniciales |
 | `api/config.php` | **Solo en Hostinger, nunca en GitHub** | Clave de la base, PIN inicial, sitios permitidos |
@@ -47,18 +48,29 @@ Todas las horas se manejan en hora de Colombia (America/Bogota, UTC-5).
 ## Publicación de la app
 
 1. En `index.html`, revisar que `API_URL` apunte a `https://citas.vibraspositivashm.com/api/index.php`.
-2. Subir `index.html` y este `README.md` al repositorio `haroldco45/citas-unas` y activar GitHub Pages. Netlify se actualiza solo desde el repositorio.
+2. Subir `index.html`, `admin.html` y este `README.md` al repositorio `haroldco45/cita-unas` y activar GitHub Pages. Netlify se actualiza solo desde el repositorio.
 3. Si la app se publica en otra dirección, agregarla a `origenes` en `config.php`.
+
+## Direcciones
+
+| Para quién | Dirección |
+|---|---|
+| Clientas | `https://cita-unas.netlify.app` |
+| Dueña (administración) | `https://cita-unas.netlify.app/admin` |
+
+La dirección de administración no se comparte con las clientas. Aunque alguien la encuentre, sin el PIN no puede ver nada: la API exige la sesión de la dueña para cada dato de administración.
+
+`admin.html` es una copia de `index.html` que solo cambia `data-app="admin"` en la etiqueta `<html>`, el título y la línea `noindex`. Cada vez que se cambie `index.html`, hay que volver a generar `admin.html` igual, para que las dos queden con el mismo código.
 
 ## Primer uso de la dueña
 
-1. Entrar con «Acceso administración» al pie de la página, con el PIN inicial.
+1. Entrar a `https://cita-unas.netlify.app/admin` con el PIN inicial.
 2. En Configuración: poner el nombre del negocio, el slogan, el WhatsApp, el horario y los precios. Cambiar el PIN.
 3. Desde ese momento el PIN queda guardado cifrado en la base, y `pin_inicial` ya no sirve.
 
 ## Modo demostración
 
-Si la app se abre como archivo, desde la vista previa de Claude o con `?demo` al final de la dirección, funciona sin servidor. Los datos se guardan en ese navegador y trae citas de ejemplo. El PIN de demostración es `1234`.
+Si la app se abre como archivo, desde la vista previa de Claude o con `?demo` al final de la dirección (`/?demo` para clientas, `/admin?demo` para la dueña), funciona sin servidor. Los datos se guardan en ese navegador y trae citas de ejemplo. El PIN de demostración es `1234`.
 
 ## Pendiente
 
