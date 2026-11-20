@@ -58,7 +58,7 @@ h1,h2,h3{font-family:var(--serif);font-weight:400;line-height:1.15;margin:0}
 .hidden{display:none!important}
 
 /* Cabecera */
-.top{padding:28px 0 18px}
+.top{padding-block:28px 18px}
 .brand{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
 .nails{display:flex;gap:5px;align-items:flex-end}
 .nails i{display:block;width:13px;border-radius:999px 999px 4px 4px;position:relative}
@@ -211,6 +211,23 @@ footer .link{font-size:.8rem;color:var(--muted)}
 .login p{margin:0}
 .login .btn{width:100%}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.quien-t{font-weight:700;margin:4px 0 8px}
+.quien{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.qchip{border:1.5px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:8px 16px;font-weight:600;cursor:pointer}
+.qchip[aria-pressed="true"]{border-color:var(--lacquer);background:var(--lacquer);color:var(--lacquer-ink)}
+.pill.p-prof{color:var(--ink);border-color:var(--line);background:var(--soft);font-weight:600}
+.eq-row{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;padding:12px 0;border-top:1px solid var(--line)}
+.eq-row:first-of-type{border-top:0}
+.eq-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.eq-top input[type=text]{flex:1;min-width:140px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.eq-dias{display:flex;flex-wrap:wrap;gap:6px}
+.dchip{position:relative;cursor:pointer}
+.dchip input{position:absolute;opacity:0;width:1px;height:1px}
+.dchip span{display:inline-block;min-width:38px;text-align:center;padding:5px 8px;border:1.5px solid var(--line);border-radius:999px;font-size:.82rem;font-weight:700;color:var(--muted)}
+.dchip input:checked+span{border-color:var(--lacquer);color:var(--lacquer);background:var(--blush)}
+.dchip input:focus-visible+span{outline:3px solid var(--lacquer);outline-offset:2px}
+.eq-pin{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:.88rem}
+.eq-pin input{width:150px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
 .adm-flag{display:inline-block;margin-top:14px;font-weight:700;font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:var(--lacquer);border:1.5px solid var(--lacquer);border-radius:999px;padding:4px 12px}
 </style>
 </head>
@@ -259,6 +276,7 @@ footer .link{font-size:.8rem;color:var(--muted)}
     <section class="panel hidden" id="p2">
       <h2>Escoge el día y la hora</h2>
       <p class="lead" id="p2lead"></p>
+      <div id="quien"></div>
       <div class="days" id="days" role="group" aria-label="Días disponibles"></div>
       <div class="dayhead" id="dayHead"></div>
       <div id="slotArea"></div>
@@ -392,7 +410,14 @@ const CONFIG_BASE = {
   horario:{0:{on:false,ini:540,fin:780},1:{on:true,ini:480,fin:1080},2:{on:true,ini:480,fin:1080},3:{on:true,ini:480,fin:1080},4:{on:true,ini:480,fin:1080},5:{on:true,ini:480,fin:1080},6:{on:true,ini:480,fin:960}},
   almuerzo:{on:true,ini:720,fin:780},
   bloqueos:[],
-  servicios:SERVICIOS_BASE
+  servicios:SERVICIOS_BASE,
+  // Equipo de demostración. En el servidor, la dueña entra con su PIN y cada trabajadora con el suyo.
+  profesionales:[
+    {id:1,nombre:'Dueña',rol:'duena',dias:[1,2,3,4,5,6],activa:true},
+    {id:2,nombre:'Ana',rol:'trabajadora',dias:[1,2,3,4,5],activa:true,pin:'1111',tienePin:true},
+    {id:3,nombre:'Luz',rol:'trabajadora',dias:[2,3,4,5,6],activa:true,pin:'2222',tienePin:true}
+  ],
+  ausencias:[]
 };
 
 /* ============ Capa de datos ============
@@ -417,7 +442,8 @@ async function api(r,{datos,params}={}){
 }
 function normalizarConfig(c){
   const h={}; for(let d=0;d<7;d++) h[d]=(c.horario&&(c.horario[d]??c.horario[String(d)]))||{on:false,ini:480,fin:1080};
-  return {...structuredClone(CONFIG_BASE),...c,horario:h,bloqueos:c.bloqueos||[],servicios:c.servicios||[]};
+  // Con un servidor viejo (sin equipo) la app funciona como una sola agenda
+  return {...structuredClone(CONFIG_BASE),...c,horario:h,bloqueos:c.bloqueos||[],servicios:c.servicios||[],profesionales:c.profesionales||[],ausencias:c.ausencias||[]};
 }
 
 const StoreLocal = {
@@ -425,22 +451,44 @@ const StoreLocal = {
   olvidarToken(){},
   async cargarConfig(){ const c=leerLocal(K_CFG); return c? {...structuredClone(CONFIG_BASE),...c} : structuredClone(CONFIG_BASE); },
   async cargarCitas(){ let c=leerLocal(K_CITAS); if(!c){ sembrarDemo(); c=CITAS; guardarLocal(K_CITAS,c); } return c; },
+  sesion(){ return null; },
   async reservar(d,porAdmin){
     const lista=d.servicios.map(svcPorId).filter(Boolean), dur=lista.reduce((a,x)=>a+Number(x.dur),0);
-    const f=franjas(d.fecha,dur).lista.find(x=>x.ini===d.inicio);
+    const pidPedido= (porAdmin && SES && SES.rol==='trabajadora')? SES.profesional.id : (d.profesional??null);
+    const f=franjas(d.fecha,dur,pidPedido).lista.find(x=>x.ini===d.inicio);
     if(!f||!f.libre) throw {error:'ocupado',mensaje:'Esa hora se acaba de ocupar. Escoge otra.'};
+    // «Cualquiera»: la que tenga menos citas ese día
+    const nDia=id=>CITAS.filter(c=>c.fecha===d.fecha&&activa(c)&&profDe(c)===id).length;
+    const pid= pidPedido ?? [...f.quien].sort((a,b)=>nDia(a)-nDia(b))[0];
     const total=lista.every(x=>x.precio!=null&&x.precio!=='')? lista.reduce((a,x)=>a+Number(x.precio),0) : null;
     const cita={id:uid(),codigo:codigo(),fecha:d.fecha,inicio:d.inicio,fin:d.inicio+dur,duracion:dur,
       servicios:lista.map(x=>({id:x.id,nombre:x.nombre,dur:Number(x.dur),precio:x.precio==null||x.precio===''?null:Number(x.precio)})),
-      total,cliente:{nombre:d.nombre,tel:d.tel},nota:d.nota,estado:porAdmin?'confirmada':'pendiente',creada:ahoraBog().iso,origen:porAdmin?'admin':'cliente'};
+      total,cliente:{nombre:d.nombre,tel:d.tel},nota:d.nota,estado:porAdmin?'confirmada':'pendiente',creada:ahoraBog().iso,origen:porAdmin?'admin':'cliente',
+      profesional:pid,profesionalNombre:nombreProf(pid)};
     guardarLocal(K_CITAS,[...CITAS,cita]); return cita;
   },
   async mis(tel){ return CITAS.filter(c=>c.cliente&&c.cliente.tel===tel); },
   async cancelar(c){ const x=CITAS.find(y=>y.id===c.id); x.estado='cancelada'; x.canceladaPor='cliente'; guardarLocal(K_CITAS,CITAS); },
-  async login(pin){ if(pin!==String(CFG.pin)) throw {error:'pin',mensaje:'PIN incorrecto.'}; },
+  async login(pin){
+    const duena=CFG.profesionales.find(p=>p.rol==='duena')||{id:null,nombre:'Dueña'};
+    if(pin===String(CFG.pin)) return {rol:'admin',profesional:{id:duena.id,nombre:duena.nombre}};
+    const t=CFG.profesionales.find(p=>p.rol==='trabajadora'&&p.activa!==false&&p.pin&&String(p.pin)===pin);
+    if(t) return {rol:'trabajadora',profesional:{id:t.id,nombre:t.nombre}};
+    throw {error:'pin',mensaje:'PIN incorrecto.'};
+  },
   async logout(){},
   async cambiarEstado(id,estado){ const c=CITAS.find(x=>x.id===id); c.estado=estado; c.actualizada=ahoraBog().iso; guardarLocal(K_CITAS,CITAS); return c; },
-  async guardarConfig(c,pin){ if(pin) c.pin=pin; guardarLocal(K_CFG,c); return c; },
+  async guardarConfig(c,pin){
+    const pins=[pin||String(c.pin)];
+    let maxId=Math.max(0,...c.profesionales.map(p=>p.id||0));
+    for(const p of c.profesionales){
+      if(!p.id) p.id=++maxId;
+      if(p.pinNuevo){ p.pin=p.pinNuevo; p.tienePin=true; delete p.pinNuevo; }
+      if(p.rol==='trabajadora'&&p.pin){ if(pins.includes(String(p.pin))) throw {error:'pin_repetido',mensaje:`Ese PIN ya lo tiene otra persona. Escoge otro para ${p.nombre}.`}; pins.push(String(p.pin)); }
+    }
+    if(pin) c.pin=pin; guardarLocal(K_CFG,c); return c;
+  },
+  async ausencia(pid,f,b){ CFG.ausencias=(CFG.ausencias||[]).filter(a=>!(a.profesional===pid&&a.fecha===f)); if(b) CFG.ausencias.push({profesional:pid,fecha:f}); guardarLocal(K_CFG,CFG); return CFG.ausencias; },
   async bloqueo(f,b){ CFG.bloqueos=b? [...new Set([...CFG.bloqueos,f])] : CFG.bloqueos.filter(x=>x!==f); guardarLocal(K_CFG,CFG); return CFG.bloqueos; },
   async respaldo(){ return {version:1,exportado:ahoraBog().iso,config:CFG,citas:CITAS}; },
   async importar(d){ CFG={...structuredClone(CONFIG_BASE),...d.config}; CITAS=d.citas; guardarLocal(K_CFG,CFG); guardarLocal(K_CITAS,CITAS); },
@@ -458,30 +506,49 @@ const StoreRemoto = {
   async reservar(d,porAdmin){ return (await api(porAdmin?'agendar':'reservar',{datos:d})).cita; },
   async mis(tel){ return await api('mis',{datos:{tel}}); },
   async cancelar(c,codigo,tel){ await api('cancelar',{datos:{tel,codigo}}); },
-  async login(pin){ const r=await api('login',{datos:{pin}}); ponerToken(r.token); },
+  async login(pin){ const r=await api('login',{datos:{pin}}); ponerToken(r.token); return {rol:r.rol||'admin',profesional:r.profesional||{id:null,nombre:''}}; },
+  async sesion(){
+    try{ const r=await api('sesion'); return {rol:r.rol,profesional:r.profesional}; }
+    catch(e){ if(e&&e.error==='ruta') return {rol:'admin',profesional:{id:null,nombre:''}}; throw e; }
+  },
   async logout(){ try{ await api('logout',{datos:{}}); } finally { ponerToken(null); } },
   async cambiarEstado(id,estado){ return (await api('estado',{datos:{id:Number(id),estado}})).cita; },
   async guardarConfig(c,pin){
     const datos={negocio:c.negocio,slogan:c.slogan,whatsapp:c.whatsapp,paso:c.paso,anticipacion:c.anticipacion,diasVista:c.diasVista,
       horasCancelar:c.horasCancelar,horario:c.horario,almuerzo:c.almuerzo,servicios:c.servicios};
+    if(c.profesionales&&c.profesionales.length) datos.profesionales=c.profesionales.map(p=>({id:p.id||null,nombre:p.nombre,dias:p.dias,activa:p.activa!==false,pinNuevo:p.pinNuevo||undefined}));
     if(pin) datos.pinNuevo=pin;
     return normalizarConfig((await api('guardar_config',{datos})).config);
   },
   async bloqueo(f,b){ return (await api('bloqueo',{datos:{fecha:f,bloquear:b}})).bloqueos; },
+  async ausencia(pid,f,b){ return (await api('ausencia',{datos:{profesional:pid,fecha:f,ausente:b}})).ausencias; },
   async respaldo(){ return await api('respaldo'); }
 };
 const Store = MODO_DEMO? StoreLocal : StoreRemoto;
 
 let CFG, CITAS = [];
-const sel = { servicios:new Set(), fecha:null, inicio:null, paso:1, porAdmin:false };
+const sel = { servicios:new Set(), fecha:null, inicio:null, paso:1, porAdmin:false, prof:null };
 let adminOn = false, admTab = 'agenda', agendaFecha = null, verTel = new Set();
-let histFiltro = { desde:'', hasta:'', estado:'', q:'' };
+let SES = null;            // quién entró: {rol:'admin'|'trabajadora', profesional:{id,nombre}}
+let agFiltro = null;       // agenda: null = todas, o el id de una persona
+let histFiltro = { desde:'', hasta:'', estado:'', q:'', prof:'' };
+const esDuena = () => !!SES && SES.rol !== 'trabajadora';
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function codigo(){ const a='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<5;i++) s+=a[Math.floor(Math.random()*a.length)]; return s; }
 function svcPorId(id){ return CFG.servicios.find(s=>s.id===id); }
 const ESTADOS = {pendiente:'Pendiente', confirmada:'Confirmada', atendida:'Atendida', noasistio:'No asistió', cancelada:'Cancelada'};
 const activa = c => c.estado!=='cancelada' && c.estado!=='noasistio';
+
+/* ============ Equipo ============ */
+const DIA_C2 = ['Do','Lu','Ma','Mi','Ju','Vi','Sá'];
+function equipo(){ const e=(CFG.profesionales||[]).filter(p=>p.activa!==false); return e.length? e : [{id:null,nombre:'',dias:[0,1,2,3,4,5,6]}]; }
+function hayEquipo(){ return equipo().length>1; }
+function profPorId(id){ return (CFG.profesionales||[]).find(p=>p.id===id); }
+function nombreProf(id){ const p=profPorId(id); return p? p.nombre : ''; }
+function profDe(c){ return c.profesional ?? equipo()[0].id; }   // citas de antes del equipo = primera persona (la dueña)
+function ausente(pid,f){ return (CFG.ausencias||[]).some(a=>a.profesional===pid && a.fecha===f); }
+function trabaja(p,f){ return (p.dias||[0,1,2,3,4,5,6]).includes(diaSemana(f)) && !ausente(p.id,f); }
 
 /* ============ Demostración (se puede borrar desde Configuración) ============ */
 function sembrarDemo(){
@@ -495,6 +562,11 @@ function sembrarDemo(){
     const dur=svcs.reduce((a,s)=>a+s.dur,0);
     return {id:uid(),codigo:codigo(),fecha:f,inicio:p[1],fin:p[1]+dur,duracion:dur,servicios:svcs,total:null,
       cliente:{nombre:nombres[i%nombres.length],tel:'30000000'+String(10+(i%nombres.length))},nota:'',estado:p[3],creada:ahoraBog().iso,origen:'cliente',demo:true};
+  });
+  // Reparte las citas de ejemplo entre el equipo, sin cruces
+  CITAS.forEach(c=>{
+    const libre=equipo().find(p=>trabaja(p,c.fecha) && !CITAS.some(o=>o!==c&&o.profesional===p.id&&o.fecha===c.fecha&&o.inicio<c.fin&&o.fin>c.inicio));
+    c.profesional=(libre||equipo()[0]).id; c.profesionalNombre=nombreProf(c.profesional);
   });
 }
 
@@ -514,8 +586,11 @@ function estadoDia(f){
   if(!h||!h.on) return {cerrado:true,motivo:'No atiende'};
   return {cerrado:false,h};
 }
-function franjas(f,dur,excluirId){
+/* pid = una persona del equipo, o null = cualquiera. Una hora está libre si alguien de las candidatas está libre. */
+function franjas(f,dur,pid=null,excluirId){
   const ed=estadoDia(f); if(ed.cerrado) return {cerrado:true,motivo:ed.motivo,lista:[]};
+  const quienes=(pid==null? equipo() : equipo().filter(p=>p.id===pid)).filter(p=>trabaja(p,f));
+  if(!quienes.length) return {cerrado:true,motivo: pid!=null? 'No viene' : 'No atiende',lista:[]};
   const {h}=ed, now=ahoraBog(), paso=Number(CFG.paso)||30;
   const ocup=CITAS.filter(c=>c.fecha===f && activa(c) && c.id!==excluirId);
   const al=CFG.almuerzo;
@@ -523,17 +598,17 @@ function franjas(f,dur,excluirId){
   for(let s=h.ini; s+dur<=h.fin; s+=paso){
     if(f===now.fecha && s < now.min + Number(CFG.anticipacion||0)) continue;
     if(al.on && s < al.fin && s+dur > al.ini) continue;
-    const choque=ocup.some(c=> s < c.fin && s+dur > c.inicio);
-    lista.push({ini:s, libre:!choque});
+    const libres=quienes.filter(p=>!ocup.some(c=> profDe(c)===p.id && s < c.fin && s+dur > c.inicio)).map(p=>p.id);
+    lista.push({ini:s, libre:libres.length>0, quien:libres});
   }
   return {cerrado:false,lista};
 }
-function libresDia(f,dur){ const r=franjas(f,dur); return r.cerrado? -1 : r.lista.filter(x=>x.libre).length; }
+function libresDia(f,dur){ const r=franjas(f,dur,sel.prof); return r.cerrado? -1 : r.lista.filter(x=>x.libre).length; }
 function proximosLibres(desde,dur,cuantos=3){
   const out=[]; const hoy=ahoraBog().fecha;
   for(let i=0;i<60 && out.length<cuantos;i++){
     const f=sumarDias(desde,i); if(f<hoy) continue;
-    const r=franjas(f,dur); const lib=r.lista.filter(x=>x.libre);
+    const r=franjas(f,dur,sel.prof); const lib=r.lista.filter(x=>x.libre);
     if(lib.length) out.push({fecha:f,ini:lib[0].ini,n:lib.length});
   }
   return out;
@@ -558,6 +633,17 @@ function pintarServicios(){
     sel.inicio=null; pintarBarra();
   }));
 }
+function pintarQuien(){
+  const box=$('quien'), e=equipo();
+  // Sin equipo, o una trabajadora agendando en su propia agenda: no se pregunta
+  if(e.length<2 || (sel.porAdmin && SES && SES.rol==='trabajadora')){ box.innerHTML=''; return; }
+  box.innerHTML=`<div class="quien-t">¿Con quién?</div><div class="quien" role="group" aria-label="Con quién">${
+    [{id:null,nombre:'Cualquiera'},...e].map(p=>`<button class="qchip" data-p="${p.id??''}" aria-pressed="${sel.prof===p.id}">${esc(p.nombre)}</button>`).join('')}</div>`;
+  box.querySelectorAll('.qchip').forEach(b=>b.addEventListener('click',()=>{
+    sel.prof= b.dataset.p===''? null : Number(b.dataset.p); sel.fecha=null; sel.inicio=null;
+    pintarQuien(); pintarDias(); pintarBarra();
+  }));
+}
 function pintarDias(){
   const {dur}=totalSel(); const hoy=ahoraBog().fecha;
   $('p2lead').textContent=`Necesitas ${duracionTxt(dur)}. Te mostramos solo las horas en que cabe tu servicio completo.`;
@@ -565,7 +651,7 @@ function pintarDias(){
   for(let i=0;i<Number(CFG.diasVista||21);i++){
     const f=sumarDias(hoy,i), n=libresDia(f,dur), d=Number(f.slice(8));
     const cls=n<0?'off':n===0?'full':'';
-    const txt=n<0?'No atiende':n===0?'Lleno':`${n} ${n===1?'cupo':'cupos'}`;
+    const txt=n<0?(sel.prof!=null&&!estadoDia(f).cerrado?'No viene':'No atiende'):n===0?'Lleno':`${n} ${n===1?'cupo':'cupos'}`;
     html+=`<button class="day ${cls}" data-f="${f}" aria-pressed="${sel.fecha===f}"><div class="w">${i===0?'Hoy':i===1?'Mañana':DIAS_C[diaSemana(f)]}</div><div class="n">${d}</div><div class="c">${txt}</div></button>`;
   }
   $('days').innerHTML=html;
@@ -574,13 +660,16 @@ function pintarDias(){
   pintarFranjas();
 }
 function pintarFranjas(){
-  const {dur}=totalSel(); const f=sel.fecha; const r=franjas(f,dur);
+  const {dur}=totalSel(); const f=sel.fecha; const r=franjas(f,dur,sel.prof);
   $('dayHead').textContent=fechaLarga(f).replace(/^./,c=>c.toUpperCase());
   const lib=r.lista.filter(x=>x.libre);
   if(r.cerrado || !lib.length){
     const sug=proximosLibres(sumarDias(f,1),dur,4);
-    const motivo= r.cerrado? 'Ese día no hay atención.' : (r.lista.length? 'Ese día ya está lleno para el tiempo que necesitas.' : 'Ese día ya no quedan horas disponibles.');
-    $('slotArea').innerHTML=`<div class="note">${motivo} ${sug.length?'Estos son los días más cercanos con cupo:':''}</div>
+    const quien=sel.prof!=null? nombreProf(sel.prof) : '';
+    const motivo= r.cerrado? (r.motivo==='No viene'? `${esc(quien)} no atiende ese día.` : 'Ese día no hay atención.')
+      : (r.lista.length? (quien? `${esc(quien)} ya tiene ese día lleno para el tiempo que necesitas.` : 'Ese día ya está lleno para el tiempo que necesitas.') : 'Ese día ya no quedan horas disponibles.');
+    const otra= quien && hayEquipo()? ' También puedes escoger «Cualquiera» arriba.' : '';
+    $('slotArea').innerHTML=`<div class="note">${motivo} ${sug.length?'Estos son los días más cercanos con cupo:':''}${otra}</div>
       <div class="sugs">${sug.map(s=>`<button class="btn ghost sm" data-f="${s.fecha}" data-i="${s.ini}">${fechaLarga(s.fecha)} desde ${hora(s.ini)}</button>`).join('')}</div>`
       + (r.lista.length? `<div class="slots" style="margin-top:16px">${r.lista.map(x=>`<button class="slot" disabled>${hora(x.ini)}<small>Ocupado</small></button>`).join('')}</div>`:'');
     $('slotArea').querySelectorAll('.sugs button').forEach(b=>b.addEventListener('click',()=>{ sel.fecha=b.dataset.f; sel.inicio=Number(b.dataset.i); pintarDias(); pintarBarra(); }));
@@ -598,13 +687,14 @@ function resumenHTML(){
   return `<dt>Servicios</dt><dd>${lista.map(s=>esc(s.nombre)).join(', ')}</dd>
     <dt>Día</dt><dd>${fechaLarga(sel.fecha)}</dd>
     <dt>Hora</dt><dd>${hora(sel.inicio)} a ${hora(sel.inicio+dur)}</dd>
+    ${hayEquipo()? `<dt>Con</dt><dd>${sel.prof==null? 'Quien esté libre a esa hora' : esc(nombreProf(sel.prof))}</dd>` : ''}
     <dt>Valor</dt><dd>${total!=null? pesos(total) : 'Te lo confirmamos al llegar'}</dd>`;
 }
 function irPaso(n){
   sel.paso=n;
   [1,2,3,4].forEach(i=>$('p'+i).classList.toggle('hidden',i!==n));
   $('steps').querySelectorAll('li').forEach(li=>{ const s=+li.dataset.s; li.classList.toggle('on',s===n); li.classList.toggle('done',s<n); });
-  if(n===2){ pintarDias(); if(!MODO_DEMO) Store.cargarCitas(adminOn).then(c=>{ CITAS=c; if(sel.paso===2) pintarDias(); }).catch(()=>{}); }
+  if(n===2){ pintarQuien(); pintarDias(); if(!MODO_DEMO) Store.cargarCitas(adminOn).then(c=>{ CITAS=c; if(sel.paso===2) pintarDias(); }).catch(()=>{}); }
   if(n===3){ $('sum3').innerHTML=resumenHTML(); }
   pintarBarra(); window.scrollTo({top:0});
 }
@@ -616,8 +706,8 @@ function pintarBarra(){
   if(sel.paso===1){
     $('barInfo').innerHTML= lista.length? `<b>${lista.length} ${lista.length===1?'servicio':'servicios'} · ${duracionTxt(dur)}</b>${total!=null?pesos(total):'Precio por definir'}` : '<span class="muted">Escoge al menos un servicio</span>';
     $('barNext').textContent='Elegir día y hora'; $('barNext').disabled=!lista.length;
-  } else if(sel.paso===2){
-    $('barInfo').innerHTML= sel.inicio!=null? `<b>${hora(sel.inicio)}</b>${fechaLarga(sel.fecha)}` : '<span class="muted">Escoge una hora</span>';
+  } else   if(sel.paso===2){
+    $('barInfo').innerHTML= sel.inicio!=null? `<b>${hora(sel.inicio)}</b>${fechaLarga(sel.fecha)}${sel.prof!=null&&hayEquipo()?' · con '+esc(nombreProf(sel.prof)):''}` : '<span class="muted">Escoge una hora</span>';
     $('barNext').textContent='Continuar'; $('barNext').disabled=sel.inicio==null;
   } else if(sel.paso===3){
     $('barInfo').innerHTML=`<b>${hora(sel.inicio)}</b>${fechaLarga(sel.fecha)}`;
@@ -633,7 +723,7 @@ async function confirmar(){
   const btn=$('barNext'); btn.disabled=true; btn.textContent='Guardando…';
   let cita;
   try{
-    cita=await Store.reservar({servicios:lista.map(s=>s.id),fecha:sel.fecha,inicio:sel.inicio,nombre,tel,nota,autoriza:$('fPriv').checked,web:$('fWeb').value}, sel.porAdmin);
+    cita=await Store.reservar({servicios:lista.map(s=>s.id),fecha:sel.fecha,inicio:sel.inicio,profesional:sel.prof,nombre,tel,nota,autoriza:$('fPriv').checked,web:$('fWeb').value}, sel.porAdmin);
   }catch(e){
     pintarBarra();
     if(e.error==='sin_sesion'){ errorAdmin(e); return; }
@@ -648,17 +738,17 @@ async function confirmar(){
   CITAS.push(cita);
   $('tCode').textContent=cita.codigo;
   $('tWhen').textContent=`${fechaLarga(cita.fecha).replace(/^./,c=>c.toUpperCase())}, ${hora(cita.inicio)}`;
-  $('tSvc').textContent=cita.servicios.map(s=>s.nombre).join(' + ');
+  $('tSvc').textContent=cita.servicios.map(s=>s.nombre).join(' + ')+(cita.profesionalNombre&&hayEquipo()? ' · con '+cita.profesionalNombre : '');
   const wa=$('tWa');
   if(CFG.whatsapp && !sel.porAdmin){
-    const msg=`Hola, separé una cita en ${CFG.negocio}.\nCódigo: ${cita.codigo}\n${fechaLarga(cita.fecha)} a las ${hora(cita.inicio)}\n${cita.servicios.map(s=>s.nombre).join(' + ')}\nA nombre de: ${nombre}`;
+    const msg=`Hola, separé una cita en ${CFG.negocio}.\nCódigo: ${cita.codigo}\n${fechaLarga(cita.fecha)} a las ${hora(cita.inicio)}\n${cita.servicios.map(s=>s.nombre).join(' + ')}${cita.profesionalNombre&&hayEquipo()?'\nCon: '+cita.profesionalNombre:''}\nA nombre de: ${nombre}`;
     wa.href=`https://wa.me/57${CFG.whatsapp}?text=${encodeURIComponent(msg)}`; wa.classList.remove('hidden');
   } else wa.classList.add('hidden');
   if(sel.porAdmin){ const fch=cita.fecha; resetReserva(); sel.porAdmin=false; $('adminBanner').classList.add('hidden'); agendaFecha=fch; mostrarVista('admin'); toast('Cita agendada.'); return; }
   irPaso(4);
 }
 function resetReserva(){
-  sel.servicios.clear(); sel.fecha=null; sel.inicio=null;
+  sel.servicios.clear(); sel.fecha=null; sel.inicio=null; sel.prof=null;
   ['fNombre','fTel','fNota'].forEach(i=>$(i).value=''); $('fPriv').checked=false;
   ['eNombre','eTel','ePriv'].forEach(i=>$(i).classList.add('hidden'));
   pintarServicios(); irPaso(1);
@@ -681,7 +771,7 @@ async function pintarMis(){
     const puede=minutosHasta(c)>=Number(CFG.horasCancelar||0)*60;
     return `<div class="appt"><div class="t">${hora(c.inicio)}<small>${fechaCorta(c.fecha)}</small></div><div>
       <div class="who">${esc(c.servicios.map(s=>s.nombre).join(' + '))}</div>
-      <div class="meta">${fechaLarga(c.fecha)}${c.codigo?' · Código '+esc(c.codigo):''} · <span class="pill st-${c.estado}">${ESTADOS[c.estado]}</span></div>
+      <div class="meta">${fechaLarga(c.fecha)}${c.profesionalNombre&&hayEquipo()?' · con '+esc(c.profesionalNombre):''}${c.codigo?' · Código '+esc(c.codigo):''} · <span class="pill st-${c.estado}">${ESTADOS[c.estado]}</span></div>
       <div class="acts">${puede?`<button class="btn ghost sm" data-cancel="${c.id}">Cancelar cita</button>`:`<span class="meta">Faltan menos de ${CFG.horasCancelar} h: para cancelar escríbenos por WhatsApp.</span>`}</div></div></div>`;
   }).join('') : '<div class="empty">No tienes citas próximas.</div>')
   + (pasadas.length? `<p class="muted" style="margin-top:18px">Historial: ${pasadas.length} ${pasadas.length===1?'cita':'citas'} anteriores, ${pasadas.filter(c=>c.estado==='atendida').length} atendidas.</p>`:'');
@@ -705,30 +795,39 @@ function enlazarOjos(root,repintar){
 function pintarAgenda(){
   const now=ahoraBog(); agendaFecha ??= now.fecha;
   const f=agendaFecha; const ed=estadoDia(f);
-  const del=CITAS.filter(c=>c.fecha===f).sort((a,b)=>a.inicio-b.inicio);
+  if(!esDuena()) agFiltro=SES.profesional.id;                 // una trabajadora solo ve su agenda
+  const deFiltro=c=> agFiltro==null || profDe(c)===agFiltro;
+  const verQuien= hayEquipo() && agFiltro==null;               // con «Todas» se muestra de quién es cada cita
+  const pSel= agFiltro!=null? profPorId(agFiltro) : null;
+  const del=CITAS.filter(c=>c.fecha===f && deFiltro(c)).sort((a,b)=>a.inicio-b.inicio);
   const act=del.filter(c=>c.estado!=='cancelada');
   const ocupadoMin=act.filter(activa).reduce((a,c)=>a+c.duracion,0);
   const bloqueado=CFG.bloqueos.includes(f);
-  let semana=''; for(let i=0;i<7;i++){ const d=sumarDias(now.fecha,i); const n=CITAS.filter(c=>c.fecha===d&&activa(c)).length;
+  let semana=''; for(let i=0;i<7;i++){ const d=sumarDias(now.fecha,i); const n=CITAS.filter(c=>c.fecha===d&&activa(c)&&deFiltro(c)).length;
     semana+=`<button class="day ${estadoDia(d).cerrado?'off':''}" data-f="${d}" aria-pressed="${d===f}"><div class="w">${i===0?'Hoy':DIAS_C[diaSemana(d)]}</div><div class="n">${Number(d.slice(8))}</div><div class="c">${n} ${n===1?'cita':'citas'}</div></button>`; }
   let lista='';
   if(!del.length) lista='<div class="empty">No hay citas este día.</div>';
   else {
-    let cursor=ed.cerrado?null:ed.h.ini;
+    let cursor=(ed.cerrado||verQuien)?null:ed.h.ini;          // los huecos libres solo tienen sentido en la agenda de una persona
     del.forEach(c=>{
       if(c.estado!=='cancelada' && cursor!=null && c.inicio-cursor>=30) lista+=`<div class="gap">Libre ${hora(cursor)} – ${hora(c.inicio)}</div>`;
       lista+=`<div class="appt"><div class="t">${hora(c.inicio)}<small>${hora(c.fin)}</small></div><div>
-        <div class="who">${esc(c.cliente.nombre)} <span class="pill st-${c.estado}">${ESTADOS[c.estado]}</span></div>
+        <div class="who">${esc(c.cliente.nombre)} <span class="pill st-${c.estado}">${ESTADOS[c.estado]}</span>${verQuien?` <span class="pill p-prof">${esc(c.profesionalNombre||nombreProf(profDe(c)))}</span>`:''}</div>
         <div class="meta">${esc(c.servicios.map(s=>s.nombre).join(' + '))} · ${duracionTxt(c.duracion)}${c.total!=null?' · '+pesos(c.total):''}</div>
-        <div class="meta">WhatsApp: ${telHTML(c.cliente.tel,c.id)} · Código ${esc(c.codigo)}${c.origen==='admin'?' · agendada por ti':''}</div>
+        <div class="meta">WhatsApp: ${telHTML(c.cliente.tel,c.id)} · Código ${esc(c.codigo)}${c.origen==='admin'?' · agendada desde la administración':''}</div>
         ${c.nota?`<div class="meta">Nota: ${esc(c.nota)}</div>`:''}
         <div class="acts"><select data-est="${c.id}" aria-label="Estado de la cita">${Object.entries(ESTADOS).map(([k,v])=>`<option value="${k}" ${k===c.estado?'selected':''}>${v}</option>`).join('')}</select>
-        <a class="btn wa sm" target="_blank" rel="noopener" href="https://wa.me/57${esc(c.cliente.tel)}?text=${encodeURIComponent(`Hola ${c.cliente.nombre.split(' ')[0]}, te recuerdo tu cita en ${CFG.negocio} el ${fechaLarga(c.fecha)} a las ${hora(c.inicio)} (${c.servicios.map(s=>s.nombre).join(' + ')}). ¿Me confirmas que vienes?`)}">Recordar</a></div>
+        <a class="btn wa sm" target="_blank" rel="noopener" href="https://wa.me/57${esc(c.cliente.tel)}?text=${encodeURIComponent(`Hola ${c.cliente.nombre.split(' ')[0]}, te recuerdo tu cita en ${CFG.negocio} el ${fechaLarga(c.fecha)} a las ${hora(c.inicio)} (${c.servicios.map(s=>s.nombre).join(' + ')}${hayEquipo()&&(c.profesionalNombre||nombreProf(profDe(c)))?', con '+(c.profesionalNombre||nombreProf(profDe(c))):''}). ¿Me confirmas que vienes?`)}">Recordar</a></div>
       </div></div>`;
       if(c.estado!=='cancelada') cursor=Math.max(cursor??0,c.fin);
     });
   }
+  const noViene= pSel && !ed.cerrado && !trabaja(pSel,f);
+  const ausenteHoy= pSel && ausente(pSel.id,f);
+  const filtros= (esDuena() && hayEquipo())? `<div class="quien" role="group" aria-label="Ver la agenda de">${
+    [{id:null,nombre:'Todas'},...equipo()].map(p=>`<button class="qchip" data-ag="${p.id??''}" aria-pressed="${agFiltro===p.id}">${esc(p.nombre)}</button>`).join('')}</div>` : '';
   $('a-agenda').innerHTML=`
+    ${filtros}
     <div class="days" id="semana">${semana}</div>
     <div class="toolbar">
       <button class="btn ghost sm" id="agPrev" aria-label="Día anterior">‹</button>
@@ -737,10 +836,11 @@ function pintarAgenda(){
       <button class="btn ghost sm" id="agAct" style="margin-left:auto">Actualizar</button>
       <button class="btn sm" id="agNueva">Agendar cita</button>
     </div>
-    <h2 style="font-size:1.35rem">${fechaLarga(f).replace(/^./,c=>c.toUpperCase())}</h2>
+    <h2 style="font-size:1.35rem">${fechaLarga(f).replace(/^./,c=>c.toUpperCase())}${pSel&&hayEquipo()?` · ${esc(pSel.nombre)}`:''}</h2>
     <div class="stats"><span><b>${act.filter(activa).length}</b> citas</span><span><b>${duracionTxt(ocupadoMin||0)}</b> ocupadas</span>
-      <span>${ed.cerrado? (bloqueado?'Día bloqueado':'Día sin atención') : `Horario ${hora(ed.h.ini)} – ${hora(ed.h.fin)}`}</span>
-      <button class="link" id="agBloq">${bloqueado?'Desbloquear este día':'Bloquear este día'}</button></div>
+      <span>${ed.cerrado? (bloqueado?'Día bloqueado':'Día sin atención') : noViene? (ausenteHoy?'No viene este día':'No trabaja este día') : `Horario ${hora(ed.h.ini)} – ${hora(ed.h.fin)}`}</span>
+      ${esDuena()? `<button class="link" id="agBloq">${bloqueado?'Desbloquear este día':'Bloquear este día para todas'}</button>`:''}
+      ${esDuena()&&pSel&&hayEquipo()&&!ed.cerrado&&(ausenteHoy||trabaja(pSel,f))? `<button class="link" id="agAus">${ausenteHoy?`${esc(pSel.nombre)} sí viene este día`:`${esc(pSel.nombre)} no viene este día`}</button>`:''}</div>
     ${lista}`;
   const A=$('a-agenda');
   A.querySelectorAll('#semana .day').forEach(b=>b.addEventListener('click',()=>{agendaFecha=b.dataset.f;pintarAgenda();}));
@@ -748,8 +848,19 @@ function pintarAgenda(){
   $('agNext').onclick=()=>{agendaFecha=sumarDias(f,1);pintarAgenda();};
   $('agFecha').onchange=e=>{ if(e.target.value){agendaFecha=e.target.value;pintarAgenda();} };
   $('agAct').onclick=()=>refrescarAdmin(true);
-  $('agNueva').onclick=()=>{ resetReserva(); sel.porAdmin=true; $('adminBanner').classList.remove('hidden'); mostrarVista('reservar'); };
-  $('agBloq').onclick=async()=>{
+  $('agNueva').onclick=()=>{
+    resetReserva(); sel.porAdmin=true;
+    sel.prof= !esDuena()? SES.profesional.id : (hayEquipo()? agFiltro : null);   // agenda en la agenda que se está viendo
+    $('adminBanner').classList.remove('hidden'); mostrarVista('reservar');
+  };
+  A.querySelectorAll('[data-ag]').forEach(b=>b.addEventListener('click',()=>{ agFiltro= b.dataset.ag===''? null : Number(b.dataset.ag); pintarAgenda(); }));
+  if($('agAus')) $('agAus').onclick=async()=>{
+    const quitar=ausenteHoy;
+    if(!quitar && act.filter(activa).length && !confirm(`${pSel.nombre} tiene citas este día. Marcarla ausente no las cancela; muévelas o avísales. ¿Seguir?`)) return;
+    try{ CFG.ausencias=await Store.ausencia(pSel.id,f,!quitar); toast(quitar?`${pSel.nombre} vuelve a tener agenda este día.`:`Listo: ${pSel.nombre} no recibe citas este día.`); }catch(e){ errorAdmin(e); }
+    pintarAgenda();
+  };
+  if($('agBloq')) $('agBloq').onclick=async()=>{
     if(!bloqueado && act.filter(activa).length && !confirm('Ese día ya tiene citas. Bloquearlo no las cancela; avísales por WhatsApp. ¿Bloquear igual?')) return;
     try{ CFG.bloqueos=await Store.bloqueo(f,!bloqueado); }catch(e){ errorAdmin(e); }
     pintarAgenda();
@@ -765,6 +876,8 @@ function pintarAgenda(){
 function citasFiltradas(){
   const q=histFiltro.q.trim().toLowerCase();
   return CITAS.filter(c=>(!histFiltro.desde||c.fecha>=histFiltro.desde)&&(!histFiltro.hasta||c.fecha<=histFiltro.hasta)&&(!histFiltro.estado||c.estado===histFiltro.estado)
+    &&(histFiltro.prof===''||String(profDe(c))===histFiltro.prof)
+    &&(esDuena()||profDe(c)===SES.profesional.id)
     &&(!q||c.cliente.nombre.toLowerCase().includes(q)||c.cliente.tel.includes(q)||c.codigo.toLowerCase().includes(q)||c.servicios.some(s=>s.nombre.toLowerCase().includes(q))))
     .sort((a,b)=>(b.fecha+aHHMM(b.inicio)).localeCompare(a.fecha+aHHMM(a.inicio)));
 }
@@ -772,28 +885,32 @@ function pintarHistorico(){
   const rows=citasFiltradas();
   const at=rows.filter(c=>c.estado==='atendida');
   const ingresos=at.reduce((a,c)=>a+(c.total||0),0), sinPrecio=at.filter(c=>c.total==null).length;
+  const conEquipo=hayEquipo();
+  const porPersona= conEquipo&&esDuena()&&histFiltro.prof===''? equipo().map(p=>{ const a=at.filter(c=>profDe(c)===p.id); return {n:p.nombre,citas:a.length,plata:a.reduce((x,c)=>x+(c.total||0),0)}; }) : [];
   $('a-historico').innerHTML=`
     <h2 style="font-size:1.35rem;margin-bottom:10px">Histórico de citas</h2>
     <div class="toolbar">
       <label class="muted" style="font-size:.85rem">Desde <input type="date" id="hDesde" value="${histFiltro.desde}"></label>
       <label class="muted" style="font-size:.85rem">Hasta <input type="date" id="hHasta" value="${histFiltro.hasta}"></label>
+      ${conEquipo&&esDuena()?`<select id="hProf" aria-label="Quién atendió"><option value="">Todo el equipo</option>${equipo().map(p=>`<option value="${p.id}" ${histFiltro.prof===String(p.id)?'selected':''}>${esc(p.nombre)}</option>`).join('')}</select>`:''}
       <select id="hEstado"><option value="">Todos los estados</option>${Object.entries(ESTADOS).map(([k,v])=>`<option value="${k}" ${histFiltro.estado===k?'selected':''}>${v}</option>`).join('')}</select>
       <input id="hQ" placeholder="Buscar clienta, servicio o código" value="${esc(histFiltro.q)}" style="flex:1;min-width:180px">
     </div>
     <div class="stats"><span><b>${rows.length}</b> citas</span><span><b>${at.length}</b> atendidas</span><span><b>${rows.filter(c=>c.estado==='noasistio').length}</b> no asistieron</span><span><b>${rows.filter(c=>c.estado==='cancelada').length}</b> canceladas</span>
       <span><b>${pesos(ingresos)}</b> ingresos${sinPrecio?` (${sinPrecio} sin precio)`:''}</span></div>
-    <div class="toolbar"><button class="btn ghost sm" id="hCsv">Descargar CSV</button>${(histFiltro.desde||histFiltro.hasta||histFiltro.estado||histFiltro.q)?'<button class="link" id="hLimpiar">Quitar filtros</button>':''}</div>
-    ${rows.length? `<div class="tbl-wrap"><table><thead><tr><th>Fecha</th><th>Hora</th><th>Clienta</th><th>WhatsApp</th><th>Servicios</th><th>Estado</th><th>Valor</th></tr></thead><tbody>
-      ${rows.map(c=>`<tr><td>${fechaCorta(c.fecha)}</td><td>${hora(c.inicio)}</td><td>${esc(c.cliente.nombre)}</td><td>${telHTML(c.cliente.tel,'h'+c.id)}</td><td class="wrap-cell">${esc(c.servicios.map(s=>s.nombre).join(' + '))}</td><td><span class="pill st-${c.estado}">${ESTADOS[c.estado]}</span></td><td>${c.total!=null?pesos(c.total):'—'}</td></tr>`).join('')}
+    ${porPersona.length?`<div class="stats">${porPersona.map(x=>`<span>${esc(x.n)}: <b>${x.citas}</b> atendidas · <b>${pesos(x.plata)}</b></span>`).join('')}</div>`:''}
+    <div class="toolbar"><button class="btn ghost sm" id="hCsv">Descargar CSV</button>${(histFiltro.desde||histFiltro.hasta||histFiltro.estado||histFiltro.q||histFiltro.prof)?'<button class="link" id="hLimpiar">Quitar filtros</button>':''}</div>
+    ${rows.length? `<div class="tbl-wrap"><table><thead><tr><th>Fecha</th><th>Hora</th><th>Clienta</th><th>WhatsApp</th><th>Servicios</th>${conEquipo?'<th>Atendió</th>':''}<th>Estado</th><th>Valor</th></tr></thead><tbody>
+      ${rows.map(c=>`<tr><td>${fechaCorta(c.fecha)}</td><td>${hora(c.inicio)}</td><td>${esc(c.cliente.nombre)}</td><td>${telHTML(c.cliente.tel,'h'+c.id)}</td><td class="wrap-cell">${esc(c.servicios.map(s=>s.nombre).join(' + '))}</td>${conEquipo?`<td>${esc(c.profesionalNombre||nombreProf(profDe(c)))}</td>`:''}<td><span class="pill st-${c.estado}">${ESTADOS[c.estado]}</span></td><td>${c.total!=null?pesos(c.total):'—'}</td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">No hay citas con esos filtros.</div>'}`;
-  const upd=()=>{ histFiltro={desde:$('hDesde').value,hasta:$('hHasta').value,estado:$('hEstado').value,q:$('hQ').value}; pintarHistorico(); };
-  ['hDesde','hHasta','hEstado'].forEach(i=>$(i).onchange=upd);
+  const upd=()=>{ histFiltro={desde:$('hDesde').value,hasta:$('hHasta').value,estado:$('hEstado').value,q:$('hQ').value,prof:$('hProf')?$('hProf').value:''}; pintarHistorico(); };
+  ['hDesde','hHasta','hEstado','hProf'].forEach(i=>{ if($(i)) $(i).onchange=upd; });
   $('hQ').oninput=()=>{ clearTimeout(pintarHistorico._t); pintarHistorico._t=setTimeout(()=>{upd(); const q=$('hQ'); q.focus(); q.setSelectionRange(q.value.length,q.value.length);},350); };
-  if($('hLimpiar')) $('hLimpiar').onclick=()=>{histFiltro={desde:'',hasta:'',estado:'',q:''};pintarHistorico();};
+  if($('hLimpiar')) $('hLimpiar').onclick=()=>{histFiltro={desde:'',hasta:'',estado:'',q:'',prof:''};pintarHistorico();};
   $('hCsv').onclick=()=>{
-    const cab=['Fecha','Hora inicio','Hora fin','Clienta','WhatsApp','Servicios','Duración (min)','Estado','Valor','Código','Origen','Nota'];
+    const cab=['Fecha','Hora inicio','Hora fin','Clienta','WhatsApp','Servicios','Duración (min)','Atendió','Estado','Valor','Código','Origen','Nota'];
     const q=v=>`"${String(v??'').replace(/"/g,'""')}"`;
-    const csv='\ufeff'+[cab.map(q).join(';'),...rows.map(c=>[fechaCorta(c.fecha),aHHMM(c.inicio),aHHMM(c.fin),c.cliente.nombre,c.cliente.tel,c.servicios.map(s=>s.nombre).join(' + '),c.duracion,ESTADOS[c.estado],c.total??'',c.codigo,c.origen,c.nota].map(q).join(';'))].join('\r\n');
+    const csv='\ufeff'+[cab.map(q).join(';'),...rows.map(c=>[fechaCorta(c.fecha),aHHMM(c.inicio),aHHMM(c.fin),c.cliente.nombre,c.cliente.tel,c.servicios.map(s=>s.nombre).join(' + '),c.duracion,c.profesionalNombre||nombreProf(profDe(c)),ESTADOS[c.estado],c.total??'',c.codigo,c.origen,c.nota].map(q).join(';'))].join('\r\n');
     descargar(`citas-${ahoraBog().fecha}.csv`,csv,'text/csv');
   };
   enlazarOjos($('a-historico'),pintarHistorico);
@@ -810,7 +927,7 @@ function pintarClientes(){
     ${arr.length?`<div class="tbl-wrap"><table><thead><tr><th>Clienta</th><th>WhatsApp</th><th>Atendidas</th><th>No asistió</th><th>Canceladas</th><th>Última visita</th><th>Total pagado</th></tr></thead><tbody>
     ${arr.map(x=>`<tr><td><button class="link" data-cli="${esc(x.tel)}">${esc(x.nombre)}</button></td><td>${telHTML(x.tel,'c'+x.tel)}</td><td>${x.atendidas}</td><td>${x.noasistio}</td><td>${x.cancel}</td><td>${x.ultima?fechaCorta(x.ultima):'—'}</td><td>${x.gastado?pesos(x.gastado):'—'}</td></tr>`).join('')}
     </tbody></table></div>`:'<div class="empty">Todavía no hay clientas.</div>'}`;
-  $('a-clientes').querySelectorAll('[data-cli]').forEach(b=>b.addEventListener('click',()=>{ histFiltro={desde:'',hasta:'',estado:'',q:b.dataset.cli}; cambiarAdm('historico'); }));
+  $('a-clientes').querySelectorAll('[data-cli]').forEach(b=>b.addEventListener('click',()=>{ histFiltro={desde:'',hasta:'',estado:'',q:b.dataset.cli,prof:''}; cambiarAdm('historico'); }));
   enlazarOjos($('a-clientes'),pintarClientes);
 }
 function pintarConfig(){
@@ -822,8 +939,20 @@ function pintarConfig(){
       <div class="field"><label for="cNeg">Nombre</label><input id="cNeg" value="${esc(c.negocio)}" maxlength="50"></div>
       <div class="field"><label for="cSlo">Frase o slogan</label><input id="cSlo" value="${esc(c.slogan)}" maxlength="90"></div>
       <div class="field"><label for="cWa">WhatsApp del negocio</label><input id="cWa" inputmode="numeric" maxlength="10" value="${esc(c.whatsapp)}" placeholder="3001234567"><div class="hint">Las clientas te avisan por aquí al separar la cita.</div></div>
-      <div class="field"><label for="cPin">Cambiar PIN de administración</label><input id="cPin" inputmode="numeric" maxlength="8" value="" placeholder="Déjalo vacío para no cambiarlo" autocomplete="off"><div class="hint">Entre 4 y 8 números.</div></div>
+      <div class="field"><label for="cPin">Cambiar PIN de administración</label><input id="cPin" inputmode="numeric" maxlength="8" value="" placeholder="Déjalo vacío para no cambiarlo" autocomplete="off"><div class="hint">Entre 4 y 8 números. Tiene que ser distinto al de tus trabajadoras.</div></div>
     </fieldset>
+    ${c.profesionales.length? `<fieldset><legend>Equipo</legend>
+      <p class="hint" style="margin:0 0 6px">Quienes atienden y qué días trabaja cada una, dentro del horario del negocio. Cada trabajadora entra a esta misma dirección con su propio PIN y ve solo su agenda.</p>
+      ${c.profesionales.map((p,i)=>`<div class="eq-row">
+        <div class="eq-top"><input type="text" id="eqN${i}" data-en="${i}" value="${esc(p.nombre)}" maxlength="40" aria-label="Nombre" placeholder="Nombre">
+          ${p.rol==='duena'? '<span class="pill p-prof">Dueña</span>' : `<label style="font-size:.88rem"><input type="checkbox" data-ea="${i}" ${p.activa!==false?'checked':''}> Activa</label>`}</div>
+        <div class="eq-dias" role="group" aria-label="Días que trabaja">${[1,2,3,4,5,6,0].map(d=>`<label class="dchip"><input type="checkbox" data-ed="${i}" value="${d}" ${(p.dias||[]).includes(d)?'checked':''}><span>${DIA_C2[d]}</span></label>`).join('')}</div>
+        ${p.rol==='duena'? '<div class="hint">Entra con el PIN de administración.</div>' :
+          `<div class="eq-pin"><input id="eqP${i}" data-ep="${i}" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="${p.tienePin?'PIN nuevo (opcional)':'Ponle un PIN'}" aria-label="PIN de ${esc(p.nombre)}">
+           <span class="muted">${p.tienePin?'Ya tiene PIN.':'Sin PIN todavía: no puede entrar.'}</span></div>`}
+      </div>`).join('')}
+      <div class="toolbar" style="margin-top:8px"><button class="btn ghost sm" id="cEqAdd">Agregar trabajadora</button></div>
+    </fieldset>` : ''}
     <fieldset><legend>Horario de atención</legend>
       ${orden.map(d=>`<div class="hrow"><label><input type="checkbox" data-hon="${d}" ${c.horario[d].on?'checked':''}> ${DIAS[d][0].toUpperCase()+DIAS[d].slice(1)}</label><span class="muted" style="font-size:.8rem">${c.horario[d].on?'Abre':'Cerrado'}</span>
         <input type="time" data-hini="${d}" value="${aHHMM(c.horario[d].ini)}" step="900"><input type="time" data-hfin="${d}" value="${aHHMM(c.horario[d].fin)}" step="900"></div>`).join('')}
@@ -861,6 +990,12 @@ function pintarConfig(){
     orden.forEach(d=>{ c.horario[d]={on:document.querySelector(`[data-hon="${d}"]`).checked,ini:deHHMM(document.querySelector(`[data-hini="${d}"]`).value),fin:deHHMM(document.querySelector(`[data-hfin="${d}"]`).value)}; });
     c.almuerzo={on:$('cAlOn').checked,ini:deHHMM($('cAlIni').value),fin:deHHMM($('cAlFin').value)};
     c.paso=+$('cPaso').value; c.anticipacion=Math.max(0,+$('cAnt').value||0); c.diasVista=Math.min(60,Math.max(3,+$('cVista').value||21)); c.horasCancelar=Math.max(0,+$('cCanc').value||0);
+    c.profesionales.forEach((p,i)=>{
+      p.nombre=document.querySelector(`[data-en="${i}"]`).value.trim();
+      p.dias=[...document.querySelectorAll(`[data-ed="${i}"]`)].filter(x=>x.checked).map(x=>Number(x.value));
+      const a=document.querySelector(`[data-ea="${i}"]`); if(a) p.activa=a.checked;
+      const pn=document.querySelector(`[data-ep="${i}"]`); p.pinNuevo= pn? pn.value.replace(/\D/g,'') : '';
+    });
     c.servicios.forEach((s,i)=>{ s.nombre=document.querySelector(`[data-sn="${i}"]`).value.trim()||s.nombre; s.cat=document.querySelector(`[data-sc="${i}"]`).value;
       s.dur=Math.max(10,+document.querySelector(`[data-sd="${i}"]`).value||s.dur); const p=document.querySelector(`[data-sp="${i}"]`).value; s.precio=p===''?null:Math.max(0,+p); s.activo=document.querySelector(`[data-sa="${i}"]`).checked; });
   };
@@ -868,10 +1003,16 @@ function pintarConfig(){
     if(!/^3\d{9}$/.test($('cWa').value.replace(/\D/g,'')) && $('cWa').value.trim()){ toast('El WhatsApp debe tener 10 dígitos y empezar por 3.'); return; }
     const pinN=$('cPin').value.replace(/\D/g,'');
     if(pinN && (pinN.length<4||pinN.length>8)){ toast('El PIN debe tener entre 4 y 8 números.'); return; }
-    leer(); $('cGuardar').disabled=true;
+    leer();
+    const malNombre=c.profesionales.find(p=>!p.nombre); if(malNombre){ toast('Cada persona del equipo necesita un nombre.'); return; }
+    const malPin=c.profesionales.find(p=>p.pinNuevo&&(p.pinNuevo.length<4||p.pinNuevo.length>8)); if(malPin){ toast(`El PIN de ${malPin.nombre} debe tener entre 4 y 8 números.`); return; }
+    const pinesNuevos=[pinN,...c.profesionales.map(p=>p.pinNuevo)].filter(Boolean);
+    if(new Set(pinesNuevos).size!==pinesNuevos.length){ toast('Cada persona necesita un PIN distinto.'); return; }
+    $('cGuardar').disabled=true;
     try{ CFG=await Store.guardarConfig(c,pinN); }catch(e){ $('cGuardar').disabled=false; errorAdmin(e); return; }
     pintarMarca(); pintarServicios(); toast(pinN?'Cambios y PIN guardados.':'Cambios guardados.'); pintarConfig();
   };
+  if($('cEqAdd')) $('cEqAdd').onclick=()=>{ leer(); c.profesionales.push({id:null,nombre:'',rol:'trabajadora',dias:[1,2,3,4,5,6],activa:true,tienePin:false}); pintarConfig(); const n=c.profesionales.length-1; $('eqN'+n).focus(); };
   $('cSvcAdd').onclick=()=>{ leer(); c.servicios.push({id:'s-'+uid(),nombre:'Nuevo servicio',cat:'Manos',dur:30,precio:null,activo:true}); pintarConfig(); };
   $('cBloqAdd').onclick=async()=>{ const f=$('cBloqF').value; if(!f) return; leer(); try{ c.bloqueos=await Store.bloqueo(f,true); }catch(e){ errorAdmin(e); } pintarConfig(); };
   $('a-config').querySelectorAll('[data-desb]').forEach(b=>b.addEventListener('click',async()=>{ leer(); try{ c.bloqueos=await Store.bloqueo(b.dataset.desb,false); }catch(e){ errorAdmin(e); } pintarConfig(); }));
@@ -889,8 +1030,14 @@ async function descargar(nombre,texto,tipo){
   try{ if(window.claude&&window.claude.use){ const d=await window.claude.use('downloads'); if(d){ await d.save({filename:nombre,data:texto}); return; } } }catch(e){ if(e&&e.code==='declined') return; }
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([texto],{type:tipo})); a.download=nombre; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
 }
+function ajustarRol(){
+  const duena=esDuena();
+  $('admTabs').querySelectorAll('[data-a="clientes"],[data-a="config"]').forEach(b=>b.classList.toggle('hidden',!duena));
+  $('admFlag').textContent= !SES? 'Administración' : duena? 'Administración' : `Agenda de ${SES.profesional.nombre}`;
+}
 function cambiarAdm(t){
   if(t==='salir'){ salirAdmin(false); return; }
+  if(!esDuena() && (t==='clientes'||t==='config')) t='agenda';
   admTab=t;
   $('admTabs').querySelectorAll('.adm-tab').forEach(b=>b.setAttribute('aria-selected',b.dataset.a===t));
   ['agenda','historico','clientes','config'].forEach(x=>$('a-'+x).classList.toggle('hidden',x!==t));
@@ -905,10 +1052,11 @@ async function refrescarAdmin(avisar){
 }
 function errorAdmin(e){
   if(e&&e.error==='sin_sesion'){ salirAdmin(true); return; }
+  if(e&&e.error==='sin_permiso'){ toast(e.mensaje); return; }
   toast((e&&e.mensaje)||'Algo falló. Intenta de nuevo.');
 }
 async function salirAdmin(expirada){
-  adminOn=false; verTel.clear();
+  adminOn=false; SES=null; agFiltro=null; admTab='agenda'; verTel.clear(); ajustarRol();
   if(expirada) Store.olvidarToken(); else { try{ await Store.logout(); }catch(_){} }
   try{ await recargarDatos(); }catch(_){}
   sel.porAdmin=false; $('adminBanner').classList.add('hidden');
@@ -949,9 +1097,9 @@ const entrar=async()=>{
   const pin=$('pinIn').value.trim(); if(!pin) return;
   $('pinOk').disabled=true; $('pinErr').classList.add('hidden');
   try{
-    await Store.login(pin); adminOn=true; await recargarDatos();
-    pintarMarca(); pintarServicios(); mostrarVista('admin');
-  }catch(e){ adminOn=false; $('pinErr').textContent=e.mensaje||'PIN incorrecto.'; $('pinErr').classList.remove('hidden'); }
+    SES=await Store.login(pin); adminOn=true; agFiltro=null; admTab='agenda'; await recargarDatos();
+    ajustarRol(); pintarMarca(); pintarServicios(); mostrarVista('admin');
+  }catch(e){ adminOn=false; SES=null; $('pinErr').textContent=e.mensaje||'PIN incorrecto.'; $('pinErr').classList.remove('hidden'); }
   $('pinOk').disabled=false;
 };
 $('pinOk').onclick=entrar; $('pinIn').addEventListener('keydown',e=>{ if(e.key==='Enter') entrar(); });
@@ -970,6 +1118,7 @@ async function recargarDatos(){
   CFG=structuredClone(CONFIG_BASE);
   // La administración solo existe en admin.html; la página de clientas nunca la abre
   adminOn=ES_ADMIN && Store.tieneSesion();
+  if(adminOn){ try{ SES=await Store.sesion(); }catch(e){ SES=null; } if(!SES){ adminOn=false; Store.olvidarToken(); } }
   if(ES_ADMIN){
     $('mainTabs').classList.add('hidden'); $('admFlag').classList.remove('hidden');
     document.title='Administración · '+(CFG.negocio||'Estudio de uñas');
@@ -980,7 +1129,7 @@ async function recargarDatos(){
     else { CITAS=[]; toast((e&&e.mensaje)||'No hay conexión con el servidor.'); }
   }
   pintarMarca(); pintarServicios(); irPaso(1);
-  if(ES_ADMIN){ adminOn? mostrarVista('admin') : mostrarLogin(); document.title='Administración · '+(CFG.negocio||'Estudio de uñas'); }
+  if(ES_ADMIN){ ajustarRol(); adminOn? mostrarVista('admin') : mostrarLogin(); document.title='Administración · '+(CFG.negocio||'Estudio de uñas'); }
   if(MODO_DEMO && !API_URL) console.info('Modo demostración: los datos se guardan en este navegador.');
 })();
 </script>
